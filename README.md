@@ -42,8 +42,17 @@ docker compose logs -f          # 看 log
 docker compose down             # 停止
 ```
 
-token 與 org 由本機 `.env` 在執行時注入（`env_file`），**不會**被打包進 image
-（`.dockerignore` 已排除 `.env`）。改了程式碼後重跑 `docker compose up -d --build` 即可。
+Docker 讀取的是 `aibudget.env`（內容格式同 `.env.example`，本機可直接 `cp .env aibudget.env`）。
+刻意用非 dot 檔名是為了 Synology File Station 也能上傳/編輯。token **不會**被打包進 image
+（`.dockerignore` 已排除），改了程式碼後重跑 `docker compose up -d --build` 即可。
+
+### 部署到 Synology（Container Manager，免 SSH）
+
+1. 從 GitHub 下載 ZIP（Code → Download ZIP）並解壓
+2. File Station 上傳整個資料夾到如 `docker/aibudget`（ZIP 內不含任何機密）
+3. 在電腦上建立 `aibudget.env`（內容照 `.env.example`），同樣上傳到該資料夾
+4. Container Manager → 專案 → 新增 → 路徑選該資料夾 → 「使用現有的 docker-compose.yml」
+5. 開 `http://NAS_IP:3002`，並到 控制台 → 安全性 → 防火牆 限制此 port 的來源 IP（本工具無登入機制）
 
 開啟 http://localhost:3000 ，每張卡片代表一個 budget，可修改：
 

@@ -3,9 +3,9 @@ services:
     build: .
     image: github-aibudget:latest
     container_name: aibudget
-    # token 與 org 由部署機的 .env 注入，不進 image（參考 .env.example）
-    # Synology：在專案資料夾以 SSH 建立 .env（File Station 看不到 dot 檔）
-    env_file: .env
+    # token 與 org 由部署機的 aibudget.env 注入，不進 image（內容照 .env.example）
+    # 刻意用非 dot 檔名：Synology File Station 無法建立/顯示 dot 檔
+    env_file: aibudget.env
     ports:
       # 對外 port 預設 3002（Synology 上 3000 / 3001 已被佔用）；可在 .env 設 HOST_PORT 覆寫
       - "${HOST_PORT:-3002}:3000"

@@ -1,5 +1,6 @@
 # token 絕對不能進版控
 .env
+aibudget.env
 
 node_modules/
 dist/

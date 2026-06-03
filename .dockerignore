@@ -1,5 +1,6 @@
 # 機密：token 絕對不能進 image —— 一律由執行時 env_file / -e 注入
 .env
+aibudget.env
 
 node_modules
 .git
