@@ -34,6 +34,17 @@
 npm run dev
 ```
 
+### 用 Docker 執行（替代方式）
+
+```bash
+docker compose up -d --build   # build image 並背景啟動
+docker compose logs -f          # 看 log
+docker compose down             # 停止
+```
+
+token 與 org 由本機 `.env` 在執行時注入（`env_file`），**不會**被打包進 image
+（`.dockerignore` 已排除 `.env`）。改了程式碼後重跑 `docker compose up -d --build` 即可。
+
 開啟 http://localhost:3000 ，每張卡片代表一個 budget，可修改：
 
 - **預算金額**（整數美元）

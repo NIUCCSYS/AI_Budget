@@ -1,0 +1,21 @@
+# 機密：token 絕對不能進 image —— 一律由執行時 env_file / -e 注入
+.env
+
+node_modules
+.git
+.gitignore
+.DS_Store
+
+# 文件與 agent / 規格工具，與執行無關
+README.md
+CLAUDE.md
+GEMINI.md
+openspec
+.claude
+.gemini
+.github
+.spectra.yaml
+.spectra
+
+Dockerfile
+docker-compose.yml

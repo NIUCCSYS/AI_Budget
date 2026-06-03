@@ -1,0 +1,12 @@
+services:
+  aibudget:
+    build: .
+    image: github-aibudget:latest
+    container_name: aibudget
+    # token 與 org 由部署機的 .env 注入，不進 image（參考 .env.example）
+    # Synology：在專案資料夾以 SSH 建立 .env（File Station 看不到 dot 檔）
+    env_file: .env
+    ports:
+      # 對外 port 可在 .env 設 HOST_PORT 覆寫（NAS 上 3000 被佔用時改這個）
+      - "${HOST_PORT:-3000}:3000"
+    restart: unless-stopped
