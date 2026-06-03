@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GitHub AI Budget 管理</title>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --fg: #e6edf3; --muted: #8b949e; --accent: #2f81f7;
+    --green: #3fb950; --red: #f85149; --yellow: #d29922;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); margin-bottom: 1.5rem; font-size: .9rem; }
+  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.1rem 1.25rem;
+  }
+  .card h2 { font-size: 1rem; margin: 0 0 .15rem; }
+  .scope { color: var(--muted); font-size: .8rem; margin-bottom: .9rem; }
+  .row { display: flex; align-items: center; gap: .6rem; margin: .55rem 0; }
+  .row label { width: 7.5rem; color: var(--muted); font-size: .85rem; flex-shrink: 0; }
+  input[type=number] {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    border-radius: 6px; padding: .4rem .6rem; width: 9rem; font-size: 1rem;
+  }
+  input[type=checkbox] { width: 1.1rem; height: 1.1rem; accent-color: var(--accent); }
+  button {
+    background: var(--green); color: #fff; border: 0; border-radius: 6px;
+    padding: .45rem 1.1rem; font-size: .9rem; cursor: pointer; margin-top: .6rem;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  .status { font-size: .85rem; margin-left: .75rem; }
+  .ok { color: var(--green); } .err { color: var(--red); }
+  .empty, .loading { color: var(--muted); padding: 2rem 0; }
+  pre.err { white-space: pre-wrap; }
+  .section-title { font-size: 1.05rem; margin: 1.5rem 0 .75rem; }
+  .bar {
+    height: 8px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 99px; overflow: hidden; margin-top: .6rem;
+  }
+  .bar i { display: block; height: 100%; }
+  .bar-label { color: var(--muted); font-size: .8rem; margin-top: .35rem; }
+  .overview {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1.25rem;
+  }
+  .overview h2 { font-size: 1rem; margin: 0 0 .3rem; }
+  .overview .total { font-size: 1.3rem; font-weight: 600; }
+  .overview .muted { color: var(--muted); font-size: .85rem; }
+  .cards-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+  .cards-row .overview { flex: 1; min-width: 280px; margin-bottom: 0; }
+  #chartBody { position: relative; height: 260px; margin-top: .5rem; }
+  .card.user-card { cursor: pointer; }
+  .card.user-card:hover { border-color: var(--accent); }
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0, 0, 0, .6); z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+  }
+  /* 作者層的 display:flex 會蓋過 UA 的 [hidden]{display:none}，須明確補上 */
+  .modal-backdrop[hidden] { display: none; }
+  .modal {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.1rem 1.25rem; width: min(720px, 92vw);
+  }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; }
+  .modal-head h2 { font-size: 1rem; margin: 0; }
+  .modal-x {
+    background: none; border: 0; color: var(--muted); font-size: 1rem;
+    cursor: pointer; margin: 0; padding: .2rem .4rem;
+  }
+  .modal-x:hover { color: var(--fg); }
+  .modal .total { font-size: 1.1rem; font-weight: 600; }
+  .modal .muted { color: var(--muted); font-size: .85rem; }
+  #modalChartWrap { position: relative; height: 240px; margin-top: .5rem; }
+</style>
+</head>
+<body>
+<h1>GitHub AI Budget 管理</h1>
+<div class="sub" id="orgLabel">載入中…</div>
+<div class="cards-row">
+  <div id="overview" class="overview"><span class="muted">讀取用量…</span></div>
+  <div id="credits" class="overview"><span class="muted">讀取內含額度…</span></div>
+</div>
+<div class="overview">
+  <h2>本月每日用量</h2>
+  <div id="chartBody"><canvas id="usageChart"></canvas></div>
+</div>
+<div id="app" class="loading">讀取 budgets…</div>
+
+<div id="modalBackdrop" class="modal-backdrop" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modalTitle"></h2>
+      <button id="modalClose" class="modal-x" title="關閉">✕</button>
+    </div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+const $ = (s, el = document) => el.querySelector(s)
+
+async function api(url, opts) {
+  const r = await fetch(url, opts)
+  const data = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(data.message || `HTTP ${r.status}`)
+  return data
+}
+
+// 金額顯示：整數照原值，小數最多兩位（去除浮點加總雜訊）
+const usd = n => '$' + (Number.isInteger(n) ? n : Number(n.toFixed(2)))
+
+// progress bar 共用邏輯：<70% 綠、70%–99% 黃、≥100% 紅；分母 0 且有消費視為 100%；填色封頂 100%
+const barRatio = (c, t) => t > 0 ? c / t : c > 0 ? 1 : 0
+const barDiv = ratio => {
+  const color = ratio >= 1 ? 'var(--red)' : ratio >= 0.7 ? 'var(--yellow)' : 'var(--green)'
+  return `<div class="bar"><i style="width:${Math.min(ratio, 1) * 100}%;background:${color}"></i></div>`
+}
+
+// 已用/預算 progress bar（含金額文字）
+function barHTML(consumed, budget) {
+  const c = Number(consumed) || 0, t = Number(budget) || 0
+  const ratio = barRatio(c, t)
+  return `
+    ${barDiv(ratio)}
+    <div class="bar-label">已用 ${usd(c)} / ${usd(t)}（${Math.round(ratio * 100)}%）</div>`
+}
+
+function budgetCard(b) {
+  const div = document.createElement('div')
+  div.className = 'card'
+  div.innerHTML = `
+    <h2>${b.budget_product_sku || b.budget_type || 'Budget'}</h2>
+    <div class="scope">範圍：${b.budget_scope} / ${b.budget_entity_name || '-'}</div>${
+      b.budget_scope === 'user' ? barHTML(b.consumed_amount ?? 0, b.budget_amount) : ''}
+    <div class="row">
+      <label>預算金額 (USD)</label>
+      <input type="number" min="0" step="1" class="amount" value="${b.budget_amount}">
+    </div>
+    <div class="row">
+      <label>超額即停用</label>
+      <input type="checkbox" class="prevent" ${b.prevent_further_usage ? 'checked' : ''}>
+    </div>
+    <div class="row">
+      <label>超額警示</label>
+      <input type="checkbox" class="alert" ${b.budget_alerting?.will_alert ? 'checked' : ''}>
+    </div>
+    <button>儲存</button><span class="status"></span>`
+
+  $('button', div).addEventListener('click', async (e) => {
+    const btn = e.target, status = $('.status', div)
+    btn.disabled = true
+    status.textContent = '儲存中…'; status.className = 'status'
+    try {
+      await api(`/api/budgets/${b.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          budget_amount: Number($('.amount', div).value),
+          prevent_further_usage: $('.prevent', div).checked,
+          budget_alerting: { ...b.budget_alerting, will_alert: $('.alert', div).checked },
+        }),
+      })
+      status.textContent = '✓ 已更新'; status.className = 'status ok'
+    } catch (err) {
+      status.textContent = '✗ ' + err.message; status.className = 'status err'
+    } finally {
+      btn.disabled = false
+    }
+  })
+
+  // user 卡片整卡可點開成員用量 modal；互動元件（輸入框 / checkbox / 按鈕 / label）的點擊不觸發
+  if (b.budget_scope === 'user') {
+    div.classList.add('user-card')
+    div.title = '點擊查看本月每日用量'
+    div.addEventListener('click', e => {
+      if (e.target.closest('input, button, label')) return
+      openMemberModal(b.budget_entity_name)
+    })
+  }
+  return div
+}
+
+// AI 相關判定（雙保險）：unitType 以 ai- 開頭（如 ai-units / ai-credits），
+// 或 sku 以底線切分含獨立片段 ai（如 copilot_ai_unit、coding_agent_ai_credit），任一命中即計入
+const isAiItem = it =>
+  /^ai-/i.test(it?.unitType ?? '') ||
+  String(it?.sku ?? '').toLowerCase().split('_').includes('ai')
+
+// usage/summary 容錯解析：只加總 AI 相關 usageItems 的 netAmount（單項退用 grossAmount）；
+// 無 usageItems 陣列回 null（頂層 total 欄位為全產品總額、無法過濾，不使用）
+function parseUsageTotal(d) {
+  if (!Array.isArray(d?.usageItems)) return null
+  let sum = 0
+  for (const it of d.usageItems) {
+    if (!isAiItem(it)) continue
+    const v = typeof it?.netAmount === 'number' ? it.netAmount
+      : typeof it?.grossAmount === 'number' ? it.grossAmount : null
+    if (v !== null) sum += v
+  }
+  return sum
+}
+
+// report 端點的 AI 項目判定——命名與 summary 端點不同（unitType 如 AICredits、sku 含空格如 Copilot AI Credits）：
+// unitType 正規化（去連字號/底線/空格）後以 ai 開頭，或 sku 以底線與空格切分含獨立片段 ai
+const isAiReportItem = it =>
+  String(it?.unitType ?? '').toLowerCase().replace(/[-_ ]/g, '').startsWith('ai') ||
+  String(it?.sku ?? '').toLowerCase().split(/[_ ]+/).includes('ai')
+
+// UTC timestamp 轉本地日期 key（YYYY-MM-DD，遵循全案本地時間慣例）
+const localDateKey = iso => {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// premium 端點月層級回空（實測怪癖）——當月資料須並行逐日查詢後合併
+// 單日失敗以 null 標記並 console.warn（部分缺日不擋整圖）
+async function fetchMonthPremium(user) {
+  const y = today.getFullYear(), m = today.getMonth() + 1, lastDay = today.getDate()
+  const reqs = []
+  for (let d = 1; d <= lastDay; d++) {
+    const q = `year=${y}&month=${m}&day=${d}${user ? `&user=${encodeURIComponent(user)}` : ''}`
+    reqs.push(api(`/api/premium-usage?${q}`).then(
+      r => ({ day: d, items: Array.isArray(r?.usageItems) ? r.usageItems : [] }),
+      err => { console.warn(`premium-usage day ${d} 失敗：${err.message}`); return { day: d, items: null } },
+    ))
+  }
+  const days = await Promise.all(reqs)
+  return { days, failed: days.filter(x => x.items === null).length, total: lastDay, lastDay, month: m }
+}
+
+// session 記憶體快取：key = 成員名（org 用空字串）；跨日（抓取日不同）視為過期重抓
+const premiumCache = new Map()
+async function fetchMonthPremiumCached(user = '') {
+  const dateKey = localDateKey(new Date().toISOString())
+  const hit = premiumCache.get(user)
+  if (hit?.dateKey === dateKey) return hit.result
+  const result = await fetchMonthPremium(user)
+  premiumCache.set(user, { dateKey, result })
+  return result
+}
+
+// 按 model 聚合為多序列：每 model 一條線，值 = 當日該 model grossAmount 加總（美元）
+function aggregateByModel(days, month, lastDay) {
+  const byModel = {}
+  for (const { day, items } of days) {
+    for (const it of items ?? []) {
+      const name = it?.model ?? '(未知 model)'
+      ;(byModel[name] ??= {})[day] = (byModel[name][day] ?? 0) + (Number(it?.grossAmount) || 0)
+    }
+  }
+  const labels = Array.from({ length: lastDay }, (_, i) => `${month}/${i + 1}`)
+  const series = Object.keys(byModel).sort().map(name => ({
+    name,
+    data: Array.from({ length: lastDay }, (_, i) => +((byModel[name][i + 1] ?? 0).toFixed(2))),
+  }))
+  return { labels, series }
+}
+
+// 固定 8 色調色盤，依 model 字典序指派（重繪穩定）；超過 8 個 model 循環重用
+const MODEL_PALETTE = ['#2f81f7', '#3fb950', '#d29922', '#f85149', '#a371f7', '#39c5cf', '#db61a2', '#e3b341']
+const modelColors = names => Object.fromEntries(names.map((n, i) => [n, MODEL_PALETTE[i % MODEL_PALETTE.length]]))
+
+// 共用的 per-model 折線圖繪製（org 大圖與成員 modal 共用）
+function drawModelChart(canvas, labels, series) {
+  const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim()
+  const colors = modelColors(series.map(s => s.name))
+  return new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: series.map(s => ({
+        label: s.name, data: s.data,
+        borderColor: colors[s.name], backgroundColor: colors[s.name], tension: .3, pointRadius: 2,
+      })),
+    },
+    options: {
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { color: css('--muted'), boxWidth: 12 } } },
+      scales: {
+        x: { ticks: { color: css('--muted') }, grid: { color: css('--border') } },
+        y: { beginAtZero: true, ticks: { color: css('--muted'), callback: v => '$' + v }, grid: { color: css('--border') } },
+      },
+    },
+  })
+}
+
+// 成員用量 modal：✕ / 背景 / Esc 三種關閉；全日失敗時留在開啟狀態並顯示錯誤
+let modalChart = null
+function closeModal() {
+  $('#modalBackdrop').hidden = true
+  if (modalChart) { modalChart.destroy(); modalChart = null }
+}
+
+async function openMemberModal(name) {
+  const body = $('#modalBody')
+  $('#modalTitle').textContent = `${name} 本月每日用量`
+  body.innerHTML = '<div class="muted">載入中…</div>'
+  $('#modalBackdrop').hidden = false
+  try {
+    const { days, failed, total, lastDay, month } = await fetchMonthPremiumCached(name)
+    if (failed === total) {
+      body.innerHTML = '<span class="err">用量報表讀取失敗</span>'
+      return
+    }
+    const totalCredits = days.flatMap(d => d.items ?? [])
+      .reduce((s, it) => s + (Number(it?.grossQuantity) || 0), 0)
+    const { labels, series } = aggregateByModel(days, month, lastDay)
+    const drawable = series.length && typeof Chart !== 'undefined'
+    body.innerHTML = `
+      <div class="total">本月合計 ${fmtInt(totalCredits)} credits</div>${
+        drawable
+          ? '<div id="modalChartWrap"><canvas id="modalChart"></canvas></div>'
+          : '<div class="muted">本月尚無 AI 用量</div>'}`
+    if (drawable) modalChart = drawModelChart($('#modalChart'), labels, series)
+  } catch (err) {
+    body.innerHTML = `<span class="err">用量報表讀取失敗：${err.message}</span>`
+  }
+}
+
+// org 每日 per-model 折線圖：獨立載入，全日失敗 / Chart.js 載入失敗 / 無資料皆僅降級本卡片
+async function loadChart() {
+  const el = $('#chartBody')
+  try {
+    const { days, failed, total, lastDay, month } = await fetchMonthPremiumCached('')
+    if (failed === total) {
+      el.innerHTML = '<span class="err">用量報表讀取失敗</span>'
+      return
+    }
+    if (typeof Chart === 'undefined') {
+      el.innerHTML = '<span class="err">圖表元件載入失敗</span>'
+      return
+    }
+    const { labels, series } = aggregateByModel(days, month, lastDay)
+    if (!series.length) {
+      el.innerHTML = '<span class="muted">本月尚無 AI 用量</span>'
+      return
+    }
+    drawModelChart($('#usageChart'), labels, series)
+  } catch (err) {
+    el.innerHTML = `<span class="err">用量報表讀取失敗：${err.message}</span>`
+  }
+}
+
+// Included credits 卡片：分子 = 當月 AI 項目 quantity 加總；分母 = /api/config 的 includedCredits（選配）
+// 獨立載入：report 失敗或無法解析僅降級本卡片；config 失敗只影響分母（仍顯示消耗值）
+const fmtInt = n => Math.round(n).toLocaleString('en-US')
+
+async function loadCredits(reportPromise, configPromise) {
+  const el = $('#credits')
+  let consumed
+  try {
+    const data = await reportPromise
+    if (!Array.isArray(data?.usageItems)) {
+      el.innerHTML = '<h2>Included credits</h2><span class="err">無法解析用量資料</span>'
+      return
+    }
+    consumed = data.usageItems.filter(isAiReportItem).reduce((s, it) => s + (Number(it?.quantity) || 0), 0)
+  } catch (err) {
+    el.innerHTML = `<h2>Included credits</h2><span class="err">用量報表讀取失敗：${err.message}</span>`
+    return
+  }
+  let included = null
+  try {
+    const cfg = await configPromise
+    if (typeof cfg?.includedCredits === 'number') included = cfg.includedCredits
+  } catch { /* config 失敗只影響分母，仍顯示消耗值 */ }
+  // 重置倒數：下月 1 日（本地時間）
+  const now = new Date()
+  const reset = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+  const days = Math.round((reset - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000)
+  el.innerHTML = `
+    <h2>Included credits</h2>
+    <div class="total">${fmtInt(consumed)}${included !== null ? ` / ${fmtInt(included)}` : ''} credits</div>${
+      included !== null ? barDiv(barRatio(consumed, included)) : ''}
+    <div class="muted">${days} 天後（${reset.getMonth() + 1}月1日）重置</div>`
+}
+
+// 總覽區：與列表各自獨立載入，usage 失敗或無法解析時僅降級總覽、不影響列表
+async function loadOverview(budgetsPromise) {
+  const el = $('#overview')
+  let total
+  try {
+    total = parseUsageTotal(await api('/api/usage'))
+  } catch (err) {
+    el.innerHTML = `<h2>本期 AI 用量</h2><span class="err">用量讀取失敗：${err.message}</span>`
+    return
+  }
+  if (total === null) {
+    el.innerHTML = '<h2>本期 AI 用量</h2><span class="err">無法解析用量資料</span>'
+    return
+  }
+  let aiBudgetSum = null
+  try {
+    const data = await budgetsPromise
+    // 分母只取 ai_credits 的 organization scope budgets，其他 SKU（codespaces / actions 等）不計入
+    const aiBudgets = (data.budgets ?? data ?? [])
+      .filter(b => b.budget_scope === 'organization' && b.budget_product_sku === 'ai_credits')
+    if (aiBudgets.length) aiBudgetSum = aiBudgets.reduce((s, b) => s + (Number(b.budget_amount) || 0), 0)
+  } catch { /* budgets 失敗由列表整頁錯誤呈現，總覽僅顯示用量 */ }
+  el.innerHTML = `
+    <h2>本期 AI 用量</h2>
+    <div class="total">${usd(total)}</div>${
+      aiBudgetSum !== null
+        ? barHTML(total, aiBudgetSum)
+        : '<div class="muted">（無 ai_credits 預算可對照）</div>'}`
+}
+
+const SECTIONS = [
+  { key: 'user', title: '成員預算' },
+  { key: 'organization', title: '組織預算' },
+  { key: 'other', title: '其他預算' },
+]
+const scopeKey = s => (s === 'user' || s === 'organization') ? s : 'other'
+const byEntityName = (a, b) => {
+  const x = a.budget_entity_name ?? '', y = b.budget_entity_name ?? ''
+  return x < y ? -1 : x > y ? 1 : 0
+}
+
+async function load(budgetsPromise, configPromise) {
+  const app = $('#app')
+  try {
+    const [{ org }, data] = await Promise.all([configPromise, budgetsPromise])
+    $('#orgLabel').textContent = `Organization：${org}`
+    const budgets = data.budgets ?? data ?? []
+    if (!budgets.length) {
+      app.className = 'empty'
+      app.textContent = '這個 org 目前沒有任何 budget。請先到 GitHub → Settings → Billing → Budgets 建立一個。'
+      return
+    }
+    app.className = ''
+    app.innerHTML = ''
+    for (const { key, title } of SECTIONS) {
+      const items = budgets.filter(b => scopeKey(b.budget_scope) === key).sort(byEntityName)
+      if (!items.length) continue
+      const sec = document.createElement('section')
+      sec.innerHTML = `<h2 class="section-title">${title}</h2>`
+      const grid = document.createElement('div')
+      grid.className = 'grid'
+      items.forEach(b => grid.appendChild(budgetCard(b)))
+      sec.appendChild(grid)
+      app.appendChild(sec)
+    }
+  } catch (err) {
+    app.innerHTML = `<pre class="err">讀取失敗：${err.message}\n\n請確認 .env 的 GITHUB_TOKEN 權限與 GITHUB_ORG 是否正確。</pre>`
+  }
+}
+
+$('#modalClose').addEventListener('click', closeModal)
+$('#modalBackdrop').addEventListener('click', e => { if (e.target === $('#modalBackdrop')) closeModal() })
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modalBackdrop').hidden) closeModal() })
+
+const today = new Date()
+const budgetsPromise = api('/api/budgets')
+const configPromise = api('/api/config')
+const reportPromise = api(`/api/usage/report?year=${today.getFullYear()}&month=${today.getMonth() + 1}`)
+loadOverview(budgetsPromise)
+loadChart()
+loadCredits(reportPromise, configPromise)
+load(budgetsPromise, configPromise)
+</script>
+</body>
+</html>

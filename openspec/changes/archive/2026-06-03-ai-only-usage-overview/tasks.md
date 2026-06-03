@@ -1,0 +1,5 @@
+## 1. AI 專屬總覽
+
+- [x] 1.1 實作 spec 需求「Usage summary parsing is fault-tolerant」（AI 過濾版）：將 public/index.html 的 parseUsageTotal 改為只從 usageItems 計算——AI 相關判定採雙保險規則（unitType 以 ai- 開頭不分大小寫，或 sku 以底線切分含獨立片段 ai 不分大小寫，任一命中即計入），加總其 netAmount（單項非數值時退用 grossAmount）；移除頂層 total 候選欄位（totalNetAmount / totalGrossAmount / netAmount / grossAmount）；usageItems 為陣列但無 AI 項目時回 0，無 usageItems 陣列時回 null 觸發「無法解析用量資料」；驗證：以 node 對 spec「parsing and filtering」範例表 7 種形狀逐列斷言通過
+- [x] 1.2 實作 spec 需求「Page header shows total usage and budget overview」（AI 專屬版）：loadOverview 分母改為只加總 budget_product_sku 為 ai_credits 的 organization scope budgets，其他 SKU 不計入；標題改「本期 AI 用量」，無 ai_credits 預算時僅顯示金額並更新提示文字（不畫 bar）；驗證：npm run dev 開 http://localhost:3000，對照實際資料確認顯示 AI 用量（目前 copilot_ai_unit 為 $0）與分母 $5（僅 ai_credits），再以頁面全域函式注入 spec「denominator excludes non-AI budgets」範例（ai_credits $5 + codespaces $5 + actions $5、AI 用量 $1）確認 bar 為 20% 綠且文字含 $1 與 $5
+- [x] 1.3 回歸驗證 spec 需求「Overview failure does not block the budget list」（行為不變）：/api/usage 失敗或無 usageItems 時僅總覽降級、budgets 各 section 照常渲染；驗證：以攔截 fetch 模擬 /api/usage 回 500 與回 { foo: "bar" } 兩種情境，確認總覽分別顯示錯誤訊息與「無法解析用量資料」、列表不受影響

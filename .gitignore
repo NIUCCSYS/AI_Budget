@@ -1,0 +1,8 @@
+# token 絕對不能進版控
+.env
+
+node_modules/
+dist/
+.DS_Store
+.spectra/
+openspec/.vector-search.db*

@@ -1,0 +1,99 @@
+schema: spec-driven
+
+context: |
+  ## 專案概覽
+  本機小工具：透過 GitHub 官方 Budgets REST API（public preview）查看與修改
+  GitHub organization 的 AI budget（spending limit）。僅在本機執行，不對外部署。
+
+  ## 技術棧
+  後端：Node.js 22 + TypeScript 5.7 + Express 4.21
+  執行方式：tsx 直接執行 TypeScript（npm run dev 為 tsx watch），無 build 步驟
+  設定管理：dotenv 16 — token 與 org 名稱存於 .env（已列入 .gitignore）
+  模組系統：ESM（package.json type: module）
+
+  前端：純 vanilla HTML / JS / CSS 單頁（public/index.html），無框架、無打包
+  樣式：手寫 CSS（GitHub 深色風格，CSS 變數定義色票）
+  與後端溝通：fetch 呼叫本機 /api/* 端點
+
+  外部整合：GitHub REST API — Budgets（public preview，API Version 2022-11-28）
+  - 個人帳號（user account）沒有修改 budget 的官方 API，本工具僅適用 organization
+  - 認證：Fine-grained PAT，Organization permissions 需「Administration: Read and write」
+  - 操作者須為該 org 的 admin 或 billing manager
+
+  測試：未設置測試框架
+  版控：目前非 git repo
+
+  ## 專案結構
+  src/server.ts      — Express 後端：讀取 .env、代理 GitHub Budgets API、提供靜態檔
+  public/index.html  — 前端單頁：卡片式列出 budgets，可修改金額與開關
+  .env               — GITHUB_TOKEN / GITHUB_ORG / PORT（不進版控）
+  .env.example       — 設定範本，含 token 建立步驟說明
+  openspec/          — 本設定檔
+
+  ## API 規範
+  Base URL：/api（本機 Express 代理層，轉發至 https://api.github.com）
+  端點：
+  - GET /api/budgets           — 列出 org 全部 budgets
+  - GET /api/budgets/:id       — 取得單一 budget
+  - PATCH /api/budgets/:id     — 更新 budget（budget_amount / prevent_further_usage / budget_alerting）
+  - GET /api/usage             — org 用量摘要
+  - GET /api/config            — 回傳 org 名稱供前端顯示
+  回應格式：原樣轉發 GitHub API 的狀態碼與 JSON body，不另行包裝
+  驗證：budget_amount 必須為 ≥ 0 的整數（GitHub API 以整數美元計）
+  錯誤處理：GitHub API 連線失敗回 502 + { message }，參數錯誤回 400 + { message }
+
+  ## 認證與授權
+  認證方式：GitHub Fine-grained PAT，僅存於 .env，由後端以 Bearer header 帶出
+  前端完全不接觸 token——所有 GitHub API 呼叫一律經本機 server 代理
+  授權模型：依賴 GitHub 端的 org 角色（admin / billing manager）
+
+  ## 資料模型
+  無本地資料庫。核心資料結構為 GitHub Budget 物件：
+  id: string（UUID）, budget_amount: integer（美元）, budget_type: ProductPricing | SkuPricing | BundlePricing,
+  budget_scope: enterprise | organization | repository | cost_center | user,
+  budget_entity_name: string, budget_product_sku: string（如 ai_credits / actions / codespaces）,
+  prevent_further_usage: boolean, budget_alerting: { will_alert, alert_recipients },
+  consumed_amount: number（user scope 才有）
+
+  ## 編碼規範
+  - TypeScript strict mode 開啟（tsconfig strict: true）
+  - 後端使用 ESM import，Node 內建模組加 node: 前綴（如 node:path）
+  - 不使用分號結尾以外的特殊 lint 工具——維持現有檔案風格（無分號、單引號、2 空格縮排）
+  - 前端 JS 直接內嵌於 index.html，保持單檔即可運作，不引入打包工具
+  - 機敏資訊（token）一律走 .env，絕不寫死在程式碼或前端
+  - 時間處理一律使用本地時間（Local time），除非外部 API 規格明定 UTC
+
+  ## 常用指令
+  npm run dev    — 開發模式（tsx watch，改檔自動重啟），開 http://localhost:3000
+  npm start      — 一般啟動
+  cp .env.example .env — 初次設定
+
+rules:
+  proposal:
+    - 必須包含「動機與背景」、「方案描述」、「Non-goals（不做什麼）」三個段落
+    - "涉及 GitHub API 的變更須先確認官方 OpenAPI 規格支援（Budgets API 為 public preview，可能變動）"
+    - 須評估是否影響 token 安全邊界——任何讓前端接觸 token 的方案一律否決
+    - 個人帳號（user account）budget 修改沒有官方 API，相關提案須註明此限制
+    - 新增相依套件須說明必要性，本專案刻意保持極簡（僅 express + dotenv）
+
+  specs:
+    - 每份 spec 對應單一 API 端點或單一 UI 功能，範圍不跨越多個 feature
+    - "API spec 須標明對應的 GitHub 上游端點路徑與方法（如 PATCH /organizations/{org}/settings/billing/budgets/{budget_id}）"
+    - "欄位類型依 GitHub OpenAPI 規格標註（如 budget_amount: integer，整數美元）"
+    - 須說明錯誤情境的回應（400 / 403 / 404 / 502）與前端顯示方式
+    - spec 使用正體中文撰寫，技術術語保留英文原文
+
+  designs:
+    - "視覺風格沿用 GitHub 深色主題：背景 #0d1117、卡片 #161b22、邊框 #30363d"
+    - "色彩一律使用既有 CSS 變數（--bg / --card / --border / --fg / --muted / --accent / --green / --red）"
+    - 互動狀態（hover / disabled / 儲存中）須明確描述樣式變化
+    - 維持卡片式 grid 排版（auto-fill, minmax(340px, 1fr)），新元素融入既有 grid
+    - 不引入任何前端框架、icon 套件或外部字型，維持單一 HTML 檔
+
+  tasks:
+    - 每個 task 以單一可驗收的功能或修改為單位，避免過大的範圍
+    - 後端變更集中在 src/server.ts，GitHub API 呼叫一律走 github() helper 統一帶 headers
+    - 前端變更集中在 public/index.html，使用 vanilla JS，不引入打包工具
+    - 任何新端點都必須經本機 server 代理，禁止前端直接呼叫 api.github.com
+    - 完成後以 npm run dev 啟動並用 curl 或瀏覽器實測端點回應
+    - 修改 budget 值的測試須先記下原值，測試後改回，避免影響真實額度
