@@ -7,6 +7,6 @@ services:
     # Synology：在專案資料夾以 SSH 建立 .env（File Station 看不到 dot 檔）
     env_file: .env
     ports:
-      # 對外 port 可在 .env 設 HOST_PORT 覆寫（NAS 上 3000 被佔用時改這個）
-      - "${HOST_PORT:-3000}:3000"
+      # 對外 port 預設 3002（Synology 上 3000 / 3001 已被佔用）；可在 .env 設 HOST_PORT 覆寫
+      - "${HOST_PORT:-3002}:3000"
     restart: unless-stopped
