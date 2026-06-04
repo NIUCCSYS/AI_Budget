@@ -26,10 +26,12 @@
   .scope { color: var(--muted); font-size: .8rem; margin-bottom: .9rem; }
   .row { display: flex; align-items: center; gap: .6rem; margin: .55rem 0; }
   .row label { width: 7.5rem; color: var(--muted); font-size: .85rem; flex-shrink: 0; }
-  input[type=number] {
+  input[type=number], input[type=password] {
     background: var(--bg); color: var(--fg); border: 1px solid var(--border);
     border-radius: 6px; padding: .4rem .6rem; width: 9rem; font-size: 1rem;
   }
+  .login-box { width: min(360px, 92vw); }
+  .login-box input[type=password] { width: 100%; margin: .6rem 0; }
   input[type=checkbox] { width: 1.1rem; height: 1.1rem; accent-color: var(--accent); }
   button {
     background: var(--green); color: #fff; border: 0; border-radius: 6px;
@@ -94,6 +96,14 @@
 </div>
 <div id="app" class="loading">讀取 budgets…</div>
 
+<div id="loginBackdrop" class="modal-backdrop" hidden>
+  <div class="modal login-box">
+    <h2>請輸入密碼</h2>
+    <input type="password" id="loginPw" placeholder="密碼" autocomplete="current-password">
+    <div><button id="loginBtn">登入</button><span class="status err" id="loginMsg"></span></div>
+  </div>
+</div>
+
 <div id="modalBackdrop" class="modal-backdrop" hidden>
   <div class="modal">
     <div class="modal-head">
@@ -111,8 +121,33 @@ const $ = (s, el = document) => el.querySelector(s)
 async function api(url, opts) {
   const r = await fetch(url, opts)
   const data = await r.json().catch(() => ({}))
+  if (r.status === 401) showLogin()
   if (!r.ok) throw new Error(data.message || `HTTP ${r.status}`)
   return data
+}
+
+// 登入遮罩：多個並行 401 只顯示一次；真正的防線在後端 middleware，這裡僅是呈現層
+let loginShown = false
+function showLogin() {
+  if (loginShown) return
+  loginShown = true
+  $('#loginBackdrop').hidden = false
+  $('#loginPw').focus()
+}
+
+async function doLogin() {
+  const msg = $('#loginMsg')
+  msg.textContent = ''
+  const r = await fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: $('#loginPw').value }),
+  })
+  if (r.ok) {
+    location.reload()
+    return
+  }
+  msg.textContent = r.status === 429 ? '嘗試次數過多，請稍後再試' : '密碼錯誤'
 }
 
 // 金額顯示：整數照原值，小數最多兩位（去除浮點加總雜訊）
@@ -453,6 +488,9 @@ async function load(budgetsPromise, configPromise) {
     app.innerHTML = `<pre class="err">讀取失敗：${err.message}\n\n請確認 .env 的 GITHUB_TOKEN 權限與 GITHUB_ORG 是否正確。</pre>`
   }
 }
+
+$('#loginBtn').addEventListener('click', doLogin)
+$('#loginPw').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin() })
 
 $('#modalClose').addEventListener('click', closeModal)
 $('#modalBackdrop').addEventListener('click', e => { if (e.target === $('#modalBackdrop')) closeModal() })
