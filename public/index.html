@@ -56,6 +56,12 @@
   .overview h2 { font-size: 1rem; margin: 0 0 .3rem; }
   .overview .total { font-size: 1.3rem; font-weight: 600; }
   .overview .muted { color: var(--muted); font-size: .85rem; }
+  .rank-row { margin: .7rem 0; }
+  .rank-head { display: flex; justify-content: space-between; align-items: baseline; gap: .6rem; font-size: .9rem; }
+  .rank-name { font-weight: 600; }
+  .rank-val { color: var(--muted); font-size: .85rem; white-space: nowrap; }
+  .rank-row.unattributed .rank-name { color: var(--muted); font-weight: 400; font-style: italic; }
+  .rank-note { color: var(--muted); font-size: .8rem; margin-top: .6rem; }
   .cards-row { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
   .cards-row .overview { flex: 1; min-width: 280px; margin-bottom: 0; }
   #chartBody { position: relative; height: 260px; margin-top: .5rem; }
@@ -93,6 +99,10 @@
 <div class="overview">
   <h2>本月每日用量</h2>
   <div id="chartBody"><canvas id="usageChart"></canvas></div>
+</div>
+<div class="overview">
+  <h2>本月成員 credits 消耗排行</h2>
+  <div id="rankingBody"><span class="muted">讀取成員用量…</span></div>
 </div>
 <div id="app" class="loading">讀取 budgets…</div>
 
@@ -272,15 +282,50 @@ async function fetchMonthPremium(user) {
   return { days, failed: days.filter(x => x.items === null).length, total: lastDay, lastDay, month: m }
 }
 
-// session 記憶體快取：key = 成員名（org 用空字串）；跨日（抓取日不同）視為過期重抓
-const premiumCache = new Map()
-async function fetchMonthPremiumCached(user = '') {
+// session 記憶體快取共用包裝：跨日（抓取日不同）視為過期重抓；失敗不留快取
+// 存的是 in-flight promise 而非已解析結果——同一輪載入中多個卡片並行取用同一 key 時只發一次請求
+function cachedByDate(store, key, fetcher) {
   const dateKey = localDateKey(new Date().toISOString())
-  const hit = premiumCache.get(user)
+  const hit = store.get(key)
   if (hit?.dateKey === dateKey) return hit.result
-  const result = await fetchMonthPremium(user)
-  premiumCache.set(user, { dateKey, result })
+  const result = fetcher().catch(err => { store.delete(key); throw err })
+  store.set(key, { dateKey, result })
   return result
+}
+
+// 成員 modal / org 大圖用：key = 成員名（org 用空字串），內容為 1 日至今的完整月資料
+const premiumCache = new Map()
+const fetchMonthPremiumCached = (user = '') =>
+  cachedByDate(premiumCache, user, () => fetchMonthPremium(user))
+
+// org 該日無任何項目 ⇒ 該日全體成員必為 0（org 為全員加總）；取數失敗無法斷定，保守納入
+const activeDays = days => days.filter(d => d.items === null || d.items.length > 0).map(d => d.day)
+
+// 本月 credits 合計：以 grossQuantity 加總，缺值日（取數失敗）略過
+const sumCredits = days => days.flatMap(d => d.items ?? []).reduce((s, it) => s + (Number(it?.grossQuantity) || 0), 0)
+
+// 排行列：依消耗遞減（同值以名稱排序），成員加總小於 org 合計時補未歸戶列（差額四捨五入為 0 則不補）
+function buildRankingRows(memberTotals, orgTotal) {
+  const rows = Object.entries(memberTotals)
+    .map(([name, credits]) => ({ name, credits }))
+    .sort((a, b) => b.credits - a.credits || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  const remainder = orgTotal - rows.reduce((s, r) => s + r.credits, 0)
+  if (Math.round(remainder) > 0) rows.push({ name: '未歸戶', credits: remainder, unattributed: true })
+  return rows
+}
+
+// 排行專用快取：只含有用量日、資料不完整，故與 premiumCache 分開，避免污染 modal 的完整月折線圖
+const rankingCache = new Map()
+async function fetchMemberCredits(user, dayNumbers) {
+  return cachedByDate(rankingCache, user, async () => {
+    const y = today.getFullYear(), m = today.getMonth() + 1
+    const days = await Promise.all(dayNumbers.map(d =>
+      api(`/api/premium-usage?year=${y}&month=${m}&day=${d}&user=${encodeURIComponent(user)}`).then(
+        r => ({ day: d, items: Array.isArray(r?.usageItems) ? r.usageItems : [] }),
+        err => { console.warn(`premium-usage ${user} day ${d} 失敗：${err.message}`); return { day: d, items: null } },
+      )))
+    return { days, failed: days.filter(x => x.items === null).length }
+  })
 }
 
 // 按 model 聚合為多序列：每 model 一條線，值 = 當日該 model grossAmount 加總（美元）
@@ -419,6 +464,54 @@ async function loadCredits(reportPromise, configPromise) {
     <div class="muted">${days} 天後（${reset.getMonth() + 1}月1日）重置</div>`
 }
 
+// 成員 credits 排行卡片：席次名單取自 /api/copilot-seats（涵蓋所有持席者，不受是否設 budget 影響）
+// 取數只針對「org 層級有用量的日子」，org 逐日資料重用 loadChart 已建立的快取、不產生額外請求
+// 降級一律留在本卡片內：名單失敗顯示錯誤、單日失敗記 console.warn 並標註部分資料失敗
+async function loadRanking(configPromise) {
+  const el = $('#rankingBody')
+  let logins
+  try {
+    const data = await api('/api/copilot-seats')
+    logins = (data?.seats ?? []).map(s => s?.assignee?.login).filter(Boolean)
+  } catch (err) {
+    el.innerHTML = `<span class="err">席次名單讀取失敗：${err.message}</span>`
+    return
+  }
+  if (!logins.length) {
+    el.innerHTML = '<span class="muted">這個 org 目前沒有已指派的 Copilot 席次。</span>'
+    return
+  }
+  let included = null
+  try {
+    const cfg = await configPromise
+    if (typeof cfg?.includedCredits === 'number') included = cfg.includedCredits
+  } catch { /* config 失敗只影響分母，仍顯示消耗值 */ }
+  try {
+    const org = await fetchMonthPremiumCached('')
+    const days = activeDays(org.days)
+    const orgTotal = sumCredits(org.days)
+    const results = await Promise.all(logins.map(async name =>
+      [name, days.length ? await fetchMemberCredits(name, days) : { days: [], failed: 0 }]))
+    const totals = Object.fromEntries(results.map(([name, r]) => [name, sumCredits(r.days)]))
+    const failed = org.failed + results.reduce((n, [, r]) => n + r.failed, 0)
+    const rows = buildRankingRows(totals, orgTotal)
+    el.innerHTML = rows.map(r => `
+      <div class="rank-row${r.unattributed ? ' unattributed' : ''}">
+        <div class="rank-head">
+          <span class="rank-name">${r.name}</span>
+          <span class="rank-val">${fmtInt(r.credits)} credits${
+            included !== null ? `（${((r.credits / included) * 100).toFixed(1)}%）` : ''}</span>
+        </div>${included !== null ? barDiv(barRatio(r.credits, included)) : ''}
+      </div>`).join('') + (
+      rows.some(r => r.unattributed)
+        ? '<div class="rank-note">「未歸戶」為無法歸屬到特定成員的消耗，非計算錯誤。</div>'
+        : '') + (
+      failed ? `<div class="rank-note err">部分資料讀取失敗（${failed} 筆），數字可能低估。</div>` : '')
+  } catch (err) {
+    el.innerHTML = `<span class="err">成員用量讀取失敗：${err.message}</span>`
+  }
+}
+
 // 總覽區：與列表各自獨立載入，usage 失敗或無法解析時僅降級總覽、不影響列表
 async function loadOverview(budgetsPromise) {
   const el = $('#overview')
@@ -503,6 +596,7 @@ const reportPromise = api(`/api/usage/report?year=${today.getFullYear()}&month=$
 loadOverview(budgetsPromise)
 loadChart()
 loadCredits(reportPromise, configPromise)
+loadRanking(configPromise)
 load(budgetsPromise, configPromise)
 </script>
 </body>

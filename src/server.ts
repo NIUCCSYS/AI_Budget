@@ -204,6 +204,12 @@ app.get('/api/premium-usage', (req, res) => {
   void github(res, `/organizations/${ORG}/settings/billing/premium_request/usage${qs}`)
 })
 
+// Copilot 已指派席次名單（供成員 credits 排行卡片列出所有持有席次者）
+// 不接受任何查詢參數；per_page 固定於後端，避免預設 30 筆導致大 org 名單被截斷
+app.get('/api/copilot-seats', (_req, res) => {
+  void github(res, `/orgs/${ORG}/copilot/billing/seats?per_page=100`)
+})
+
 // 前端取得 org 名稱與選配的內含 credits 分母用
 // INCLUDED_CREDITS 須為正整數，否則視為未設定（null）
 const includedCreditsRaw = Number(process.env.INCLUDED_CREDITS)
